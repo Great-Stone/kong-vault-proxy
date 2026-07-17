@@ -4,6 +4,7 @@ set -euo pipefail
 UI_DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT="${UI_PORT:-3090}"
 REAUTH="${UI_DIR}/../reauth.sh"
+PID_FILE="${UI_DIR}/../data/ui.pid"
 
 if [[ "${SKIP_REAUTH:-0}" != "1" && -x "$REAUTH" ]]; then
   echo "warming kong-vault-proxy (AppRole)…"
@@ -13,4 +14,6 @@ fi
 cd "$UI_DIR"
 echo "kong-vault-proxy UI → http://127.0.0.1:${PORT}"
 echo "Proxy default: http://localhost:8000 (UI에서 변경 가능)"
+mkdir -p "$(dirname "$PID_FILE")"
+printf '%s' "$$" > "$PID_FILE"
 exec python3 -m http.server "$PORT" --bind 127.0.0.1

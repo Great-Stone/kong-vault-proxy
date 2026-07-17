@@ -38,8 +38,7 @@ Vault UI: vault-1 `18200`, vault-2 `18202`, vault-3 `18203`
 ## 정리
 
 ```bash
-docker compose -f docker-compose.yml down -v
-rm -rf data
+./clean.sh
 ```
 
 [English](README.md)
