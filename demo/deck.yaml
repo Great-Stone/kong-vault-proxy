@@ -1,0 +1,169 @@
+_format_version: "3.0"
+
+upstreams:
+  - name: vault-cluster
+    tags: [plugin-demo]
+    algorithm: round-robin
+    slots: 10000
+    healthchecks:
+      active:
+        type: http
+        http_path: /v1/sys/health
+        healthy:
+          interval: 2
+          successes: 1
+          http_statuses: [200, 429, 472, 473]
+        unhealthy:
+          interval: 2
+          http_failures: 1
+          tcp_failures: 1
+          timeouts: 1
+          http_statuses: [500, 501, 502, 503]
+      passive:
+        type: http
+        healthy:
+          successes: 1
+          http_statuses: [200, 201, 202, 203, 204, 205, 206, 207, 208, 226, 429]
+        unhealthy:
+          http_failures: 1
+          timeouts: 1
+          http_statuses: [500, 503]
+    targets:
+      - target: vault-1:8200
+        weight: 100
+        tags: [plugin-demo]
+      - target: vault-2:8200
+        weight: 100
+        tags: [plugin-demo]
+      - target: vault-3:8200
+        weight: 100
+        tags: [plugin-demo]
+
+services:
+  - name: kong-vault-proxy-vault
+    host: vault-cluster
+    port: 8200
+    protocol: http
+    path: /v1
+    tags: [plugin-demo]
+    routes:
+      # Internal App: own apikey; only this Route (Vault auth still via kong-vault-proxy).
+      - name: kong-vault-proxy-internal-app
+        tags: [plugin-demo]
+        paths:
+          - /app
+        strip_path: true
+        methods:
+          - GET
+          - OPTIONS
+        protocols:
+          - http
+          - https
+        plugins:
+          - name: key-auth
+            tags: [plugin-demo]
+          - name: acl
+            tags: [plugin-demo]
+            config:
+              allow: [app]
+      - name: kong-vault-proxy-app-a
+        tags: [plugin-demo]
+        paths:
+          - /secret/data/app-a
+        strip_path: false
+        methods:
+          - GET
+          - OPTIONS
+        protocols:
+          - http
+          - https
+        plugins:
+          - name: key-auth
+            tags: [plugin-demo]
+          - name: acl
+            tags: [plugin-demo]
+            config:
+              allow: [app-a]
+      - name: kong-vault-proxy-app-b
+        tags: [plugin-demo]
+        paths:
+          - /secret/data/app-b
+        strip_path: false
+        methods:
+          - GET
+          - OPTIONS
+        protocols:
+          - http
+          - https
+        plugins:
+          - name: key-auth
+            tags: [plugin-demo]
+          - name: acl
+            tags: [plugin-demo]
+            config:
+              allow: [app-b]
+    plugins:
+      - name: cors
+        tags: [plugin-demo]
+        config:
+          origins:
+            - "*"
+          methods:
+            - GET
+            - OPTIONS
+          headers:
+            - apikey
+            - Content-Type
+            - X-Vault-Token
+          exposed_headers:
+            - X-Kong-Vault-Proxy-Cache
+            - X-Kong-Vault-Proxy-Vault
+          credentials: false
+          max_age: 3600
+      - name: kong-vault-proxy
+        tags: [plugin-demo]
+        config:
+          token_mode: force
+          auth_method: approle
+          approle_auth_path: approle
+          approle_role_id: ${{ env "DECK_VAULT_ROLE_ID" }}
+          approle_secret_id_file: /run/kong-vault-proxy/approle_secret_id
+          vault_addrs:
+            - vault-1:8200
+            - vault-2:8200
+            - vault-3:8200
+          vault_scheme: http
+          tls_verify: false
+          cacheable_methods:
+            - GET
+          cache:
+            enabled: true
+            kv_min_cache_ttl: 5
+            default_ttl: 30
+            neg_ttl: 2
+
+consumers:
+  - username: vault-app-a
+    tags: [plugin-demo]
+    keyauth_credentials:
+      - key: vault-app-a-key
+        tags: [plugin-demo]
+    acls:
+      - group: app-a
+        tags: [plugin-demo]
+  - username: vault-app-b
+    tags: [plugin-demo]
+    keyauth_credentials:
+      - key: vault-app-b-key
+        tags: [plugin-demo]
+    acls:
+      - group: app-b
+        tags: [plugin-demo]
+  - username: vault-app
+    tags: [plugin-demo]
+    keyauth_credentials:
+      - key: vault-app-key
+        tags: [plugin-demo]
+    acls:
+      - group: app
+        tags: [plugin-demo]

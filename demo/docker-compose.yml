@@ -1,0 +1,57 @@
+name: vault-ha
+
+networks:
+  kong-net:
+    external: true
+    name: kong-net
+
+services:
+  vault-1:
+    image: hashicorp/vault:1.18
+    container_name: vault-1
+    hostname: vault-1
+    networks: [kong-net]
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_ADDR: http://127.0.0.1:8200
+      SKIP_SETCAP: "true"
+    volumes:
+      - ./config/vault-1.hcl:/vault/config/vault.hcl:ro
+      - ./data/vault-1:/vault/data
+    # Use `vault server ...` so the image entrypoint does not prepend another -config dir
+    # (double listener bind => "address already in use").
+    command: ["vault", "server", "-config=/vault/config/vault.hcl"]
+    ports:
+      - "18200:8200"
+
+  vault-2:
+    image: hashicorp/vault:1.18
+    container_name: vault-2
+    hostname: vault-2
+    networks: [kong-net]
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_ADDR: http://127.0.0.1:8200
+      SKIP_SETCAP: "true"
+    volumes:
+      - ./config/vault-2.hcl:/vault/config/vault.hcl:ro
+      - ./data/vault-2:/vault/data
+    command: ["vault", "server", "-config=/vault/config/vault.hcl"]
+    ports:
+      - "18202:8200"
+
+  vault-3:
+    image: hashicorp/vault:1.18
+    container_name: vault-3
+    hostname: vault-3
+    networks: [kong-net]
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_ADDR: http://127.0.0.1:8200
+      SKIP_SETCAP: "true"
+    volumes:
+      - ./config/vault-3.hcl:/vault/config/vault.hcl:ro
+      - ./data/vault-3:/vault/data
+    command: ["vault", "server", "-config=/vault/config/vault.hcl"]
+    ports:
+      - "18203:8200"
