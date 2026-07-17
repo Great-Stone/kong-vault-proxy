@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
+# Tear down Vault HA demo and remove this demo's Kong entities / local data.
+# Does not touch kong-enterprise/docker (managed separately).
 set -euo pipefail
 
 DEMO_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "$DEMO_DIR/.." && pwd)"
-ENTERPRISE_DOCKER="${KONG_ENTERPRISE_DOCKER:-$PLUGIN_ROOT/../../../kong-enterprise/docker}"
-ENTERPRISE_DOCKER="$(cd "$ENTERPRISE_DOCKER" && pwd)"
 DATA_DIR="$DEMO_DIR/data"
 
 ADMIN_TOKEN="${KONG_ADMIN_TOKEN:-kongadmin}"
@@ -35,12 +34,6 @@ if curl -sf -H "Kong-Admin-Token: $ADMIN_TOKEN" "$ADMIN_API/" >/dev/null; then
   delete_entity consumers vault-app-a
   delete_entity consumers vault-app-b
   delete_entity upstreams vault-cluster
-fi
-
-if [[ -n "$(docker compose -f "$ENTERPRISE_DOCKER/docker-compose.yml" \
-  ps --status running -q kong-cp kong-dp)" ]]; then
-  docker compose -f "$ENTERPRISE_DOCKER/docker-compose.yml" \
-    up -d --force-recreate --no-deps kong-cp kong-dp
 fi
 
 docker compose -f "$DEMO_DIR/docker-compose.yml" down -v
