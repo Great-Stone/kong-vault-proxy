@@ -2,7 +2,7 @@ package = "kong-vault-proxy"
 version = "0.1.0-1"
 
 source = {
-  url = "git+https://example.com/your-org/kong-plugin-kong-vault-proxy.git",
+  url = "git+https://github.com/Great-Stone/kong-vault-proxy.git",
   tag = "0.1.0",
 }
 
