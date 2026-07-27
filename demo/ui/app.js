@@ -25,6 +25,16 @@
       sceneAppDenyDetail: "App key on Client Route → 403",
       sceneCache: "cache MISS → HIT",
       sceneCacheDetail: "Two identical GETs, X-Kong-Vault-Proxy-Cache",
+      sceneBypass: "cache bypass",
+      sceneBypassDetail: "X-Kong-Vault-Proxy-Bypass-Cache → Vault (BYPASS)",
+      bypassComplete: "Cache bypassed — Vault was called (BYPASS).",
+      bypassUnexpected: "Expected BYPASS, got cache={cache}",
+      sceneClear: "cache clear",
+      sceneClearDetail: "POST cache-clear then GET → MISS",
+      cacheClearOk: "Cache cleared",
+      cacheClearFail: "cache-clear failed: HTTP {status}",
+      cacheClearThenMiss: "After clear, GET is MISS from Vault.",
+      cacheClearUnexpected: "Expected MISS after clear, got cache={cache}",
       noRun: "No run yet",
       noRunDetail: "Choose a scene and press Play to trace Client → Kong → Vault.",
       liveTopology: "Live Topology",
@@ -99,6 +109,16 @@
       sceneAppDenyDetail: "App 키로 Client Route 접근 → 403",
       sceneCache: "캐시 MISS → HIT",
       sceneCacheDetail: "동일 GET 2회, X-Kong-Vault-Proxy-Cache",
+      sceneBypass: "캐시 무시",
+      sceneBypassDetail: "X-Kong-Vault-Proxy-Bypass-Cache → Vault (BYPASS)",
+      bypassComplete: "캐시를 무시하고 Vault를 호출했습니다 (BYPASS).",
+      bypassUnexpected: "BYPASS 예상, 실제 cache={cache}",
+      sceneClear: "캐시 삭제",
+      sceneClearDetail: "POST cache-clear 후 GET → MISS",
+      cacheClearOk: "캐시 삭제 완료",
+      cacheClearFail: "cache-clear 실패: HTTP {status}",
+      cacheClearThenMiss: "삭제 후 GET은 Vault MISS입니다.",
+      cacheClearUnexpected: "삭제 후 MISS 예상, 실제 cache={cache}",
       noRun: "아직 실행 없음",
       noRunDetail: "시나리오를 고르고 Play 하면 Client → Kong → Vault hop이 기록됩니다.",
       liveTopology: "실시간 토폴로지",
@@ -177,6 +197,20 @@
       key: "vault-app-a-key",
       expect: 200,
       twice: true,
+    },
+    bypass: {
+      titleKey: "sceneBypass",
+      path: "/secret/data/app-a/demo",
+      key: "vault-app-a-key",
+      expect: 200,
+      bypassCache: true,
+    },
+    clear: {
+      titleKey: "sceneClear",
+      path: "/secret/data/app-a/demo",
+      key: "vault-app-a-key",
+      expect: 200,
+      clearCache: true,
     },
   };
 
@@ -258,6 +292,66 @@
   function clearTopology() {
     clearNodes();
     clearLines();
+  }
+
+  /** Anchor on a node edge, relative to the topology box. */
+  function nodeAnchor(nodeId, side, yBias = 0) {
+    const root = els.topology;
+    const el = root.querySelector(`[data-node="${nodeId}"]`);
+    if (!el) return { x: 0, y: 0 };
+    const pr = root.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const x = side === "left" ? r.left - pr.left : r.right - pr.left;
+    const y = r.top - pr.top + r.height / 2 + yBias;
+    return { x, y };
+  }
+
+  function cubic(a, b) {
+    const mx = (a.x + b.x) / 2;
+    return `M ${a.x.toFixed(1)} ${a.y.toFixed(1)} C ${mx.toFixed(1)} ${a.y.toFixed(1)}, ${mx.toFixed(1)} ${b.y.toFixed(1)}, ${b.x.toFixed(1)} ${b.y.toFixed(1)}`;
+  }
+
+  /** Keep SVG paths glued to node cards (avoids fan-out / misaligned static coords). */
+  function layoutTopologyLines() {
+    const root = els.topology;
+    const svg = root.querySelector(".topology-lines");
+    if (!svg || root.clientWidth < 40) return;
+
+    const w = root.clientWidth;
+    const h = root.clientHeight;
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    svg.setAttribute("width", String(w));
+    svg.setAttribute("height", String(h));
+
+    const outBias = -6;
+    const backBias = 8;
+
+    const clientOut = nodeAnchor("client", "right", outBias);
+    const clientBack = nodeAnchor("client", "right", backBias);
+    const appOut = nodeAnchor("app", "right", outBias);
+    const appBack = nodeAnchor("app", "right", backBias);
+    const kongLeftOut = nodeAnchor("kong", "left", outBias);
+    const kongLeftBack = nodeAnchor("kong", "left", backBias);
+    const kongRightOut = nodeAnchor("kong", "right", outBias);
+    const kongRightBack = nodeAnchor("kong", "right", backBias);
+
+    const set = (id, d) => {
+      const p = document.getElementById(id);
+      if (p) p.setAttribute("d", d);
+    };
+
+    set("line-client-kong", cubic(clientOut, kongLeftOut));
+    set("line-app-kong", cubic(appOut, kongLeftOut));
+    set("line-kong-client", cubic(kongLeftBack, clientBack));
+    set("line-kong-app", cubic(kongLeftBack, appBack));
+
+    for (const n of [1, 2, 3]) {
+      const id = `vault-${n}`;
+      const vLeftOut = nodeAnchor(id, "left", outBias);
+      const vLeftBack = nodeAnchor(id, "left", backBias);
+      set(`line-kong-vault${n}`, cubic(kongRightOut, vLeftOut));
+      set(`line-vault${n}-kong`, cubic(vLeftBack, kongRightBack));
+    }
   }
 
   function setNodeState(ids, state) {
@@ -345,8 +439,8 @@
     }
 
     if (phase === "from-vault") {
-      // full round-trip: actor→kong→vault and vault→kong→actor
-      setLines([out, vOut, vBack, back].filter(Boolean), mode);
+      // Return hop only (outbound already shown in to-vault) — fewer overlapping strokes
+      setLines([vBack, back].filter(Boolean), mode);
       setNodeState([actor, "kong"], "complete");
       setNodeState(["vault-1", "vault-2", "vault-3"], null);
       if (vault) setNodeState([vault], error ? "error" : "complete");
@@ -355,8 +449,8 @@
     }
 
     if (phase === "cache") {
-      // cache HIT: no vault edge — actor↔kong only
-      setLines([out, back], mode);
+      // cache HIT: actor ← kong on return path
+      setLines([back], mode);
       setNodeState([actor, "kong"], "complete");
       setNodeState(["vault-1", "vault-2", "vault-3"], null);
       setChips(chips);
@@ -472,17 +566,25 @@
 
   async function requestOnce(scene, label) {
     const req = requestUrl(scene);
+    const headers = { "X-Vault-Request": "true" };
+    if (scene.bypassCache) {
+      headers["X-Kong-Vault-Proxy-Bypass-Cache"] = "true";
+    }
     els.detailRequest.textContent = JSON.stringify({
       method: "GET",
       url: req.url,
       auth: req.auth,
+      headers,
     }, null, 2);
 
     const started = performance.now();
     let res;
     let bodyText = "";
     try {
-      res = await fetch(req.url, { method: "GET" });
+      res = await fetch(req.url, {
+        method: "GET",
+        headers,
+      });
       bodyText = await res.text();
     } catch (err) {
       throw new Error(t("fetchFailed", { message: err.message }));
@@ -512,6 +614,53 @@
     );
 
     return { status: res.status, cache, vault, ms, bodyJson };
+  }
+
+  async function clearCacheOnce(scene) {
+    const base = els.proxyUrl.value.replace(/\/$/, "");
+    const url = `${base}/kong-vault-proxy/v1/cache-clear?apikey=${encodeURIComponent(scene.key)}`;
+    const headers = {
+      "X-Vault-Request": "true",
+      "Content-Type": "application/json",
+    };
+    const body = { type: "all" };
+    els.detailRequest.textContent = JSON.stringify({
+      method: "POST",
+      url,
+      headers,
+      body,
+    }, null, 2);
+
+    let res;
+    let bodyText = "";
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+      bodyText = await res.text();
+    } catch (err) {
+      throw new Error(t("fetchFailed", { message: err.message }));
+    }
+
+    let bodyJson;
+    try {
+      bodyJson = JSON.parse(bodyText);
+    } catch {
+      bodyJson = bodyText;
+    }
+    els.detailResponse.textContent = JSON.stringify({
+      status: res.status,
+      body: bodyJson,
+    }, null, 2);
+
+    if (res.status === 200) {
+      addTrace(t("cacheClearOk"), `type=all`);
+    } else {
+      addTrace(t("cacheClearFail", { status: res.status }), bodyText, "error");
+    }
+    return { status: res.status, bodyJson };
   }
 
   async function playScene() {
@@ -646,6 +795,60 @@
           });
           setStage(t("cacheUnknown"), `cache=${second.cache}, vault=${second.vault}`);
         }
+      } else if (scene.bypassCache) {
+        const bypassed = (first.cache || "").toUpperCase() === "BYPASS";
+        if (bypassed && vaultNode) {
+          setStage(t("complete"), t("bypassComplete"));
+        } else if (hitCache) {
+          setStage(t("bypassUnexpected", { cache: first.cache }), t("cacheNoVault"));
+          setRunState("error");
+          busy = false;
+          return;
+        } else {
+          setStage(
+            t("complete"),
+            vaultNode
+              ? t("routeComplete", { actor, vault: vaultNode })
+              : t("bypassComplete")
+          );
+        }
+      } else if (scene.clearCache) {
+        setStage(t("sceneClear"), t("sceneClearDetail"));
+        paintPath({ actor, phase: "at-kong", chips: cacheChips });
+        await sleep(300);
+        const cleared = await clearCacheOnce(scene);
+        if (cleared.status !== 200) {
+          setStage(t("cacheClearFail", { status: cleared.status }), "");
+          setRunState("error");
+          busy = false;
+          return;
+        }
+        await sleep(300);
+        const after = await requestOnce(scene, "MISS?");
+        const v2 = vaultNodeFromPeer(after.vault);
+        const miss =
+          (after.cache || "").toUpperCase() === "MISS" ||
+          ((after.cache || "").toUpperCase() !== "HIT" && after.vault !== "cache");
+        if (miss && after.status === 200) {
+          paintPath({
+            actor,
+            vault: v2,
+            phase: "from-vault",
+            chips: cacheChips,
+          });
+          setStage(t("complete"), t("cacheClearThenMiss"));
+        } else {
+          paintPath({
+            actor,
+            phase: "cache",
+            chips: cacheChips,
+            error: true,
+          });
+          setStage(t("cacheClearUnexpected", { cache: after.cache }), "");
+          setRunState("error");
+          busy = false;
+          return;
+        }
       } else {
         setStage(
           t("complete"),
@@ -679,7 +882,7 @@
     autoToggle = true;
     els.auto.textContent = t("stopAuto");
     selectActor("app");
-    const cycle = ["app-a", "app-b", "cache"];
+    const cycle = ["app-a", "app-b", "cache", "bypass"];
     let i = 0;
     const tick = async () => {
       if (!autoToggle || busy) return;
@@ -729,4 +932,14 @@
   selectActor("client");
   applyLanguage();
   loadVaultMap();
+  layoutTopologyLines();
+  window.addEventListener("resize", () => {
+    layoutTopologyLines();
+  });
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => layoutTopologyLines()).observe(els.topology);
+  }
+  // Fonts / late layout
+  requestAnimationFrame(() => layoutTopologyLines());
+  setTimeout(layoutTopologyLines, 120);
 })();

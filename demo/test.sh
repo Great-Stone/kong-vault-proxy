@@ -2,6 +2,7 @@
 # 1) AppRole auth via Kong (secret_id one-shot 30s)
 # 2) Token renewal from AppRole-issued token
 # 3) Vault node failure + recovery via Kong Upstream health
+# 4) X-Vault-Request, cache invalidate on write
 set -euo pipefail
 
 DEMO_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,6 +18,7 @@ INTERNAL_APP_B_PATH="/app/secret/data/app-b/demo"
 APP_A_KEY="vault-app-a-key"
 APP_B_KEY="vault-app-b-key"
 APP_KEY="vault-app-key"
+VR=( -H "X-Vault-Request: true" )
 
 pass=0
 fail=0
@@ -30,9 +32,20 @@ UNSEAL_KEY="$(jq -r '.unseal_keys_b64[0]' "$INIT_JSON")"
 proxy_get() {
   local path="${1:-$APP_A_PATH}"
   local key="${2:-$APP_A_KEY}"
-  curl -sS -D - -o /tmp/sp-body.json -H "apikey: $key" \
+  curl -sS -D - -o /tmp/sp-body.json -H "apikey: $key" "${VR[@]}" \
     "${PROXY_URL}${path}" || true
 }
+
+# ---------- 0) X-Vault-Request required ----------
+log "0) X-Vault-Request header"
+code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "apikey: $APP_A_KEY" \
+  "${PROXY_URL}${APP_A_PATH}" || true)"
+if [[ "$code" == "412" ]]; then
+  ok "missing X-Vault-Request returns 412"
+else
+  bad "missing X-Vault-Request expected 412 (got HTTP $code)"
+fi
 
 # ---------- 1) AppRole auth ----------
 log "1) AppRole auth through Kong"
@@ -63,7 +76,7 @@ else
 fi
 
 code="$(curl -sS -o /tmp/sp-body.json -w '%{http_code}' \
-  -H "apikey: $APP_KEY" \
+  -H "apikey: $APP_KEY" "${VR[@]}" \
   "${PROXY_URL}${INTERNAL_APP_A_PATH}" || true)"
 body="$(cat /tmp/sp-body.json 2>/dev/null || true)"
 if [[ "$code" == "200" ]] && printf '%s' "$body" | jq -e '.data.data.password == "app-a-secret"' >/dev/null 2>&1; then
@@ -73,7 +86,7 @@ else
 fi
 
 code="$(curl -sS -o /tmp/sp-body.json -w '%{http_code}' \
-  -H "apikey: $APP_KEY" \
+  -H "apikey: $APP_KEY" "${VR[@]}" \
   "${PROXY_URL}${INTERNAL_APP_B_PATH}" || true)"
 body="$(cat /tmp/sp-body.json 2>/dev/null || true)"
 if [[ "$code" == "200" ]] && printf '%s' "$body" | jq -e '.data.data.password == "app-b-secret"' >/dev/null 2>&1; then
@@ -83,7 +96,7 @@ else
 fi
 
 code="$(curl -sS -o /dev/null -w '%{http_code}' \
-  -H "apikey: $APP_KEY" \
+  -H "apikey: $APP_KEY" "${VR[@]}" \
   "${PROXY_URL}${APP_A_PATH}" || true)"
 if [[ "$code" == "403" ]]; then
   ok "App apikey is denied on Client Route"
@@ -92,7 +105,7 @@ else
 fi
 
 code="$(curl -sS -o /dev/null -w '%{http_code}' \
-  -H "apikey: $APP_A_KEY" \
+  -H "apikey: $APP_A_KEY" "${VR[@]}" \
   "${PROXY_URL}${INTERNAL_APP_A_PATH}" || true)"
 if [[ "$code" == "403" ]]; then
   ok "Client apikey is denied on App Route"
@@ -117,7 +130,6 @@ else
   bad "missing role_id/secret_id files under demo/data"
 fi
 
-# Verify the role issues renewable orphan periodic tokens.
 CHECK_SECRET_ID="$(docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN="$ROOT_TOKEN" vault-1 \
   vault write -field=secret_id -f auth/approle/role/kong-vault-proxy/secret-id)"
 CHECK_LOGIN="$(curl -sS \
@@ -133,6 +145,47 @@ if printf '%s' "$CHECK_LOOKUP" | jq -e \
 else
   bad "AppRole token is not renewable orphan periodic: $CHECK_LOOKUP"
 fi
+
+# ---------- 1b) cache HIT + write invalidation ----------
+log "1b) cache HIT and write invalidation"
+tmp="$(mktemp)"
+curl -sS -D "$tmp" -o /dev/null -H "apikey: $APP_A_KEY" "${VR[@]}" \
+  "${PROXY_URL}${APP_A_PATH}" || true
+curl -sS -D "$tmp" -o /dev/null -H "apikey: $APP_A_KEY" "${VR[@]}" \
+  "${PROXY_URL}${APP_A_PATH}" || true
+hit="$(tr -d '\r' < "$tmp" | awk -F': ' 'tolower($1)=="x-kong-vault-proxy-cache"{print $2; exit}')"
+if [[ "$hit" == "HIT" ]]; then
+  ok "second GET is cache HIT"
+else
+  bad "expected cache HIT (got '${hit:-missing}')"
+fi
+
+put_code="$(curl -sS -o /tmp/sp-put.json -w '%{http_code}' -X POST \
+  -H "apikey: $APP_A_KEY" "${VR[@]}" -H "Content-Type: application/json" \
+  -d '{"data":{"password":"app-a-rotated","env":"demo"}}' \
+  "${PROXY_URL}${APP_A_PATH}" || true)"
+if [[ "$put_code" == "200" ]]; then
+  ok "KV write through proxy (HTTP $put_code)"
+else
+  bad "KV write expected 200 (got HTTP $put_code body=$(cat /tmp/sp-put.json))"
+fi
+
+curl -sS -D "$tmp" -o /tmp/sp-body.json -H "apikey: $APP_A_KEY" "${VR[@]}" \
+  "${PROXY_URL}${APP_A_PATH}" || true
+after="$(tr -d '\r' < "$tmp" | awk -F': ' 'tolower($1)=="x-kong-vault-proxy-cache"{print $2; exit}')"
+body="$(cat /tmp/sp-body.json 2>/dev/null || true)"
+if [[ "$after" == "MISS" ]] && printf '%s' "$body" | jq -e '.data.data.password == "app-a-rotated"' >/dev/null 2>&1; then
+  ok "write invalidated cache (MISS + new value)"
+else
+  bad "after write expected MISS with app-a-rotated (cache=$after body=$body)"
+fi
+
+# restore demo secret for later tests
+curl -sS -o /dev/null -X POST \
+  -H "apikey: $APP_A_KEY" "${VR[@]}" -H "Content-Type: application/json" \
+  -d '{"data":{"password":"app-a-secret","env":"demo"}}' \
+  "${PROXY_URL}${APP_A_PATH}" || true
+rm -f "$tmp"
 
 # ---------- 2) Token renewal ----------
 log "2) periodic token renewal at 4/5 of 30s (24s)"
@@ -159,7 +212,6 @@ fi
 
 # ---------- 3) Failure + recovery ----------
 log "3) Vault failure and recovery"
-# Stop current leader if detectable; otherwise vault-1
 leader="vault-1"
 for n in vault-1 vault-2 vault-3; do
   port=18200
@@ -175,14 +227,12 @@ done
 log "stopping leader $leader"
 docker stop "$leader" >/dev/null
 
-# Allow Kong active HC + Vault election
 sleep 8
 hdr="$(proxy_get "$APP_A_PATH" "$APP_A_KEY")"
 code="$(printf '%s' "$hdr" | awk 'NR==1{print $2}')"
 if [[ "$code" == "200" ]]; then
   ok "proxy survives leader outage ($leader stopped)"
 else
-  # retry once after election
   sleep 5
   hdr="$(proxy_get "$APP_A_PATH" "$APP_A_KEY")"
   code="$(printf '%s' "$hdr" | awk 'NR==1{print $2}')"
@@ -195,12 +245,11 @@ fi
 
 log "starting + unsealing $leader"
 docker start "$leader" >/dev/null
-# wait for HTTP
 for i in $(seq 1 30); do
   port=18200
   [[ "$leader" == vault-2 ]] && port=18202
   [[ "$leader" == vault-3 ]] && port=18203
-  if curl -sf "http://127.0.0.1:${port}/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200" >/dev/null; then
+  if curl -sf "http://127.0.0.1:${port}/v1/sys/health?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200" >/dev/null; then
     break
   fi
   sleep 1

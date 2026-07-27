@@ -1,10 +1,11 @@
 local token_mgr = require "kong.plugins.kong-vault-proxy.token"
 local cache = require "kong.plugins.kong-vault-proxy.cache"
+local metrics = require "kong.plugins.kong-vault-proxy.metrics"
 local cjson = require "cjson.safe"
 
 local KongVaultProxyHandler = {
   PRIORITY = 800,
-  VERSION = "0.1.0",
+  VERSION = "0.2.0",
 }
 
 local function client_vault_token()
@@ -106,12 +107,70 @@ local function upstream_vault_peer(conf)
   return peer
 end
 
+local function handle_cache_clear(conf)
+  if not conf.enable_cache_clear then
+    return false
+  end
+  local clear_path = conf.cache_clear_path or "/kong-vault-proxy/v1/cache-clear"
+  local path = kong.request.get_path()
+  if path ~= clear_path then
+    return false
+  end
+  if kong.request.get_method() ~= "POST" then
+    return kong.response.exit(405, { message = "method not allowed" })
+  end
+
+  local body = kong.request.get_raw_body()
+  local decoded = cjson.decode(body or "") or {}
+  local typ = decoded.type or "all"
+  local value = decoded.value
+  if typ ~= "all" and (not value or value == "") then
+    return kong.response.exit(400, { message = "value required unless type=all" })
+  end
+
+  local ok, err = cache.clear(conf, typ, value)
+  if not ok then
+    return kong.response.exit(500, { message = "cache clear failed", error = err })
+  end
+  return kong.response.exit(200, { message = "ok", type = typ })
+end
+
+function KongVaultProxyHandler:init_worker()
+  metrics.init_worker()
+end
+
 function KongVaultProxyHandler:configure(configs)
   ip_to_vault = {}
   token_mgr.configure(configs)
 end
 
 function KongVaultProxyHandler:access(conf)
+  if conf.require_vault_request_header then
+    local hdr = kong.request.get_header("X-Vault-Request")
+    if not hdr or string.lower(tostring(hdr)) ~= "true" then
+      return kong.response.exit(412, {
+        message = "missing or invalid X-Vault-Request header",
+      })
+    end
+  end
+
+  local cleared = handle_cache_clear(conf)
+  if cleared ~= false then
+    return cleared
+  end
+
+  local method = kong.request.get_method()
+  local path = kong.request.get_path()
+
+  if cache.is_mutating(method) and conf.cache and conf.cache.enabled then
+    cache.invalidate_path(conf, path)
+    -- also invalidate without service prefix quirks: strip leading /v1 if present later
+    local stripped = path:gsub("^/v1", "")
+    if stripped ~= path then
+      cache.invalidate_path(conf, stripped)
+    end
+  end
+
   local vault_token, err = resolve_token(conf)
   if conf.token_mode == "force" and not vault_token then
     return kong.response.exit(502, {
@@ -139,29 +198,47 @@ function KongVaultProxyHandler:access(conf)
     end
   end
 
-  local method = kong.request.get_method()
   if not cache.is_cacheable(conf, method) then
     return
   end
 
-  local service = kong.router.get_service()
-  local path = kong.request.get_path()
-  local qs = kong.request.get_raw_query()
-  local ns = kong.request.get_header("X-Vault-Namespace") or conf.namespace or ""
-  local key = cache.key(method, (service and service.id or "") .. ":" .. path,
-                        qs, ns, vault_token)
-
-  local hit = cache.get(key)
-  if hit then
-    local headers = hit.headers or {}
-    headers["X-Kong-Vault-Proxy-Cache"] = "HIT"
-    -- ponytail: HIT skips upstream — UI should not light a Vault node
-    headers["X-Kong-Vault-Proxy-Vault"] = "cache"
-    return kong.response.exit(hit.status, hit.body, headers)
+  -- Bypass: Cache-Control: no-cache | no-store, or X-Kong-Vault-Proxy-Bypass-Cache: true
+  local bypass = false
+  local cc = kong.request.get_header("Cache-Control")
+  if cc then
+    local lcc = string.lower(tostring(cc))
+    if lcc:find("no%-cache", 1, false) or lcc:find("no%-store", 1, false) then
+      bypass = true
+    end
+  end
+  local bypass_hdr = kong.request.get_header("X-Kong-Vault-Proxy-Bypass-Cache")
+  if bypass_hdr and string.lower(tostring(bypass_hdr)) == "true" then
+    bypass = true
   end
 
+  local service = kong.router.get_service()
+  local qs = kong.request.get_raw_query()
+  local ns = kong.request.get_header("X-Vault-Namespace") or conf.namespace or ""
+  local cache_path = (service and service.id or "") .. ":" .. path
+  local key = cache.key(method, cache_path, qs, ns, vault_token)
+
+  if not bypass then
+    local hit = cache.get(conf, key)
+    if hit then
+      metrics.cache_hit()
+      local headers = hit.headers or {}
+      headers["X-Kong-Vault-Proxy-Cache"] = "HIT"
+      -- ponytail: HIT skips upstream — UI should not light a Vault node
+      headers["X-Kong-Vault-Proxy-Vault"] = "cache"
+      return kong.response.exit(hit.status, hit.body, headers)
+    end
+  end
+
+  metrics.cache_miss()
   kong.ctx.plugin.cache_key = key
+  kong.ctx.plugin.cache_path = path
   kong.ctx.plugin.cache_conf = true
+  kong.ctx.plugin.cache_bypass = bypass
   kong.service.request.enable_buffering()
 end
 
@@ -185,17 +262,21 @@ function KongVaultProxyHandler:response(conf)
   local body_json = cjson.decode(body or "")
   local ttl = cache.compute_ttl(conf, status, body_json)
 
-  local ok, err = cache.set(kong.ctx.plugin.cache_key, {
+  local ok, err = cache.set(conf, kong.ctx.plugin.cache_key, {
     status = status,
     body = body or "",
     headers = headers,
-  }, ttl)
+  }, ttl, kong.ctx.plugin.cache_path)
 
   if not ok then
     kong.log.warn("[kong-vault-proxy] cache set failed: ", err)
   end
 
-  kong.response.set_header("X-Kong-Vault-Proxy-Cache", "MISS")
+  if kong.ctx.plugin.cache_bypass then
+    kong.response.set_header("X-Kong-Vault-Proxy-Cache", "BYPASS")
+  else
+    kong.response.set_header("X-Kong-Vault-Proxy-Cache", "MISS")
+  end
 end
 
 return KongVaultProxyHandler

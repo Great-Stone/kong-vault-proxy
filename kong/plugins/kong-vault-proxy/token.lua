@@ -1,11 +1,12 @@
 local auth = require "kong.plugins.kong-vault-proxy.auth"
 local vault_http = require "kong.plugins.kong-vault-proxy.http"
+local metrics = require "kong.plugins.kong-vault-proxy.metrics"
 local cjson = require "cjson.safe"
 local resty_sha256 = require "resty.sha256"
 local str = require "resty.string"
 local resty_lock = require "resty.lock"
 
-local TOKEN_DICT = "kong_vault_proxy_cache"
+local TOKEN_DICT = "kong_vault_proxy_tokens"
 -- Vault Agent-style renewal: renew at 4/5 of the current lease.
 local RENEW_RATIO = 0.8
 local MIN_RENEW_DELAY = 5
@@ -93,12 +94,15 @@ end
 function _M.login_and_store(conf)
   local token, err, lease = auth.login(conf)
   if not token then
+    metrics.auth_failure()
     return nil, err
   end
   local ok, set_err = _M.set(conf, token, lease)
   if not ok then
+    metrics.auth_failure()
     return nil, set_err
   end
+  metrics.auth_success()
   return token, nil, lease
 end
 
@@ -180,6 +184,7 @@ function _M.renew_or_relogin(conf)
       _M.set(conf, token, lease)
       kong.log.notice("[kong-vault-proxy] token renewed, lease=", lease)
     else
+      metrics.renew_failure()
       kong.log.warn("[kong-vault-proxy] renew-self failed, re-login: ", err)
       token = nil
     end

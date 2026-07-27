@@ -15,8 +15,8 @@ need docker
 need curl
 need jq
 
-[[ -f "$INIT_JSON" ]] || { echo "missing $INIT_JSON — run ./up.sh first" >&2; exit 1; }
-[[ -f "$ROLE_ID_FILE" ]] || { echo "missing role_id — run ./up.sh first" >&2; exit 1; }
+[[ -f "$INIT_JSON" ]] || { echo "missing $INIT_JSON — run ./start.sh first" >&2; exit 1; }
+[[ -f "$ROLE_ID_FILE" ]] || { echo "missing role_id — run ./start.sh first" >&2; exit 1; }
 
 ROOT_TOKEN="$(jq -r .root_token "$INIT_JSON")"
 vexec() {
@@ -58,6 +58,7 @@ code=000
 for _ in $(seq 1 20); do
   code="$(curl -sS -o /tmp/sp-reauth.json -w '%{http_code}' \
     -H 'apikey: vault-app-a-key' \
+    -H 'X-Vault-Request: true' \
     "${PROXY_URL}/secret/data/app-a/demo" || true)"
   [[ "$code" == "200" ]] && break
   sleep 1

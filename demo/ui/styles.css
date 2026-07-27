@@ -381,29 +381,41 @@ button:disabled {
 
 .topology-lines path {
   fill: none;
-  stroke: rgba(214, 236, 220, 0.18);
-  stroke-width: 2.5;
+  stroke: rgba(214, 236, 220, 0.22);
+  stroke-width: 2;
   stroke-linecap: round;
-  opacity: 0.55;
-  transition: stroke 0.2s ease, opacity 0.2s ease;
+  stroke-linejoin: round;
+  opacity: 0.35;
+  transition: stroke 0.2s ease, opacity 0.2s ease, stroke-width 0.2s ease;
+}
+
+.topology-lines path.return-line {
+  opacity: 0.12;
+  stroke-width: 1.75;
 }
 
 .topology-lines path.active {
   stroke: var(--mint);
   opacity: 1;
-  stroke-dasharray: 12 8;
-  animation: dash-flow 0.9s linear infinite;
-  filter: drop-shadow(0 0 8px rgba(93, 255, 178, 0.45));
+  stroke-width: 2.5;
+  stroke-dasharray: 10 7;
+  animation: dash-flow 0.85s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(93, 255, 178, 0.4));
 }
 
 .topology-lines path.return-line.active {
   stroke: var(--cyan);
-  filter: drop-shadow(0 0 8px rgba(111, 215, 255, 0.45));
+  opacity: 1;
+  stroke-width: 2.25;
+  filter: drop-shadow(0 0 6px rgba(111, 215, 255, 0.4));
 }
 
 .topology-lines path.error {
   stroke: var(--red);
   opacity: 1;
+  stroke-dasharray: none;
+  animation: none;
+  filter: none;
 }
 
 @keyframes dash-flow {

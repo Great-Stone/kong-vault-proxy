@@ -1,17 +1,17 @@
 package = "kong-vault-proxy"
-version = "0.1.0-1"
+version = "0.2.0-1"
 
 source = {
   url = "git+https://github.com/Great-Stone/kong-vault-proxy.git",
-  tag = "0.1.0",
+  tag = "0.2.0",
 }
 
 description = {
   summary  = "Vault API proxy with auto-auth, token renewal, and TTL caching for Kong Gateway",
   detailed = [[
     Proxies client requests to HashiCorp Vault with Vault Proxy-like
-    auto-auth, token renewal, and response caching. Cluster LB and
-    health checks are left to Kong Upstream + Targets.
+    auto-auth, token renewal, and response caching (memory or redis).
+    Cluster LB and health checks are left to Kong Upstream + Targets.
   ]],
   license  = "MIT",
 }
@@ -32,5 +32,8 @@ build = {
     ["kong.plugins.kong-vault-proxy.auth.kubernetes"] = "kong/plugins/kong-vault-proxy/auth/kubernetes.lua",
     ["kong.plugins.kong-vault-proxy.token"]           = "kong/plugins/kong-vault-proxy/token.lua",
     ["kong.plugins.kong-vault-proxy.cache"]           = "kong/plugins/kong-vault-proxy/cache.lua",
+    ["kong.plugins.kong-vault-proxy.cache.memory"]    = "kong/plugins/kong-vault-proxy/cache/memory.lua",
+    ["kong.plugins.kong-vault-proxy.cache.redis"]     = "kong/plugins/kong-vault-proxy/cache/redis.lua",
+    ["kong.plugins.kong-vault-proxy.metrics"]         = "kong/plugins/kong-vault-proxy/metrics.lua",
   },
 }

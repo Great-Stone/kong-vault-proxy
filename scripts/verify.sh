@@ -9,10 +9,12 @@ API_KEY="${API_KEY:-vault-app-a-key}"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
-curl -sS -D "$tmp" -o /dev/null -H "apikey: ${API_KEY}" "${PROXY_URL}${SECRET_PATH}" || true
+hdr=( -H "apikey: ${API_KEY}" -H "X-Vault-Request: true" )
+
+curl -sS -D "$tmp" -o /dev/null "${hdr[@]}" "${PROXY_URL}${SECRET_PATH}" || true
 miss="$(tr -d '\r' < "$tmp" | awk -F': ' 'tolower($1)=="x-kong-vault-proxy-cache"{print $2; exit}')"
 
-curl -sS -D "$tmp" -o /dev/null -H "apikey: ${API_KEY}" "${PROXY_URL}${SECRET_PATH}" || true
+curl -sS -D "$tmp" -o /dev/null "${hdr[@]}" "${PROXY_URL}${SECRET_PATH}" || true
 hit="$(tr -d '\r' < "$tmp" | awk -F': ' 'tolower($1)=="x-kong-vault-proxy-cache"{print $2; exit}')"
 
 if [[ "${hit}" != "HIT" ]]; then

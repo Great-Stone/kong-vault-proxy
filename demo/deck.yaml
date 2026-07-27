@@ -1,4 +1,5 @@
 _format_version: "3.0"
+_workspace: kong-vault-proxy
 
 upstreams:
   - name: vault-cluster
@@ -8,6 +9,7 @@ upstreams:
     healthchecks:
       active:
         type: http
+        # Kong http_path cannot include query strings; treat standby/perf-standby codes as healthy.
         http_path: /v1/sys/health
         healthy:
           interval: 2
@@ -18,16 +20,16 @@ upstreams:
           http_failures: 1
           tcp_failures: 1
           timeouts: 1
-          http_statuses: [500, 501, 502, 503]
+          http_statuses: [500, 501, 502, 503, 474, 530]
       passive:
         type: http
         healthy:
           successes: 1
-          http_statuses: [200, 201, 202, 203, 204, 205, 206, 207, 208, 226, 429]
+          http_statuses: [200, 201, 202, 203, 204, 205, 206, 207, 208, 226, 429, 472, 473]
         unhealthy:
           http_failures: 1
           timeouts: 1
-          http_statuses: [500, 503]
+          http_statuses: [500, 503, 474, 530]
     targets:
       - target: vault-1:8200
         weight: 100
@@ -47,7 +49,6 @@ services:
     path: /v1
     tags: [plugin-demo]
     routes:
-      # Internal App: own apikey; only this Route (Vault auth still via kong-vault-proxy).
       - name: kong-vault-proxy-internal-app
         tags: [plugin-demo]
         paths:
@@ -73,6 +74,8 @@ services:
         strip_path: false
         methods:
           - GET
+          - PUT
+          - POST
           - OPTIONS
         protocols:
           - http
@@ -102,6 +105,24 @@ services:
             tags: [plugin-demo]
             config:
               allow: [app-b]
+      - name: kong-vault-proxy-cache-clear
+        tags: [plugin-demo]
+        paths:
+          - /kong-vault-proxy/v1/cache-clear
+        strip_path: false
+        methods:
+          - POST
+          - OPTIONS
+        protocols:
+          - http
+          - https
+        plugins:
+          - name: key-auth
+            tags: [plugin-demo]
+          - name: acl
+            tags: [plugin-demo]
+            config:
+              allow: [app-a]
     plugins:
       - name: cors
         tags: [plugin-demo]
@@ -110,11 +131,15 @@ services:
             - "*"
           methods:
             - GET
+            - PUT
+            - POST
             - OPTIONS
           headers:
             - apikey
             - Content-Type
             - X-Vault-Token
+            - X-Vault-Request
+            - X-Kong-Vault-Proxy-Bypass-Cache
           exposed_headers:
             - X-Kong-Vault-Proxy-Cache
             - X-Kong-Vault-Proxy-Vault
@@ -128,6 +153,9 @@ services:
           approle_auth_path: approle
           approle_role_id: ${{ env "DECK_VAULT_ROLE_ID" }}
           approle_secret_id_file: /run/kong-vault-proxy/approle_secret_id
+          require_vault_request_header: true
+          enable_cache_clear: true
+          cache_clear_path: /kong-vault-proxy/v1/cache-clear
           vault_addrs:
             - vault-1:8200
             - vault-2:8200
@@ -138,9 +166,12 @@ services:
             - GET
           cache:
             enabled: true
+            strategy: memory
             kv_min_cache_ttl: 5
             default_ttl: 30
             neg_ttl: 2
+            memory:
+              dictionary_name: kong_vault_proxy_cache
 
 consumers:
   - username: vault-app-a

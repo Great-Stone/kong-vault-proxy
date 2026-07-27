@@ -99,6 +99,14 @@
               <strong data-i18n="sceneCache">cache MISS → HIT</strong>
               <span data-i18n="sceneCacheDetail">Two identical GETs, X-Kong-Vault-Proxy-Cache</span>
             </button>
+            <button class="scene" data-scene="bypass" type="button">
+              <strong data-i18n="sceneBypass">cache bypass</strong>
+              <span data-i18n="sceneBypassDetail">X-Kong-Vault-Proxy-Bypass-Cache → Vault (BYPASS)</span>
+            </button>
+            <button class="scene" data-scene="clear" type="button">
+              <strong data-i18n="sceneClear">cache clear</strong>
+              <span data-i18n="sceneClearDetail">POST cache-clear then GET → MISS</span>
+            </button>
           </div>
 
           <div id="trace-tree" class="trace-tree">
@@ -123,20 +131,17 @@
           </div>
 
           <div class="topology" id="topology">
-            <svg class="topology-lines" viewBox="0 0 1100 640" preserveAspectRatio="none" aria-hidden="true">
-              <!-- outbound -->
-              <path id="line-client-kong" d="M216 120 L400 260" />
-              <path id="line-app-kong" d="M216 400 L400 320" />
-              <path id="line-kong-vault1" d="M610 240 L780 120" />
-              <path id="line-kong-vault2" d="M610 290 L780 290" />
-              <path id="line-kong-vault3" d="M610 340 L780 460" />
-              <!-- return: vault-N → kong -->
-              <path id="line-vault1-kong" class="return-line" d="M780 140 L610 250" />
-              <path id="line-vault2-kong" class="return-line" d="M780 310 L610 300" />
-              <path id="line-vault3-kong" class="return-line" d="M780 480 L610 330" />
-              <!-- return: kong → actor -->
-              <path id="line-kong-client" class="return-line" d="M400 250 L216 140" />
-              <path id="line-kong-app" class="return-line" d="M400 310 L216 380" />
+            <svg class="topology-lines" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden="true">
+              <path id="line-client-kong" d="" />
+              <path id="line-app-kong" d="" />
+              <path id="line-kong-vault1" d="" />
+              <path id="line-kong-vault2" d="" />
+              <path id="line-kong-vault3" d="" />
+              <path id="line-vault1-kong" class="return-line" d="" />
+              <path id="line-vault2-kong" class="return-line" d="" />
+              <path id="line-vault3-kong" class="return-line" d="" />
+              <path id="line-kong-client" class="return-line" d="" />
+              <path id="line-kong-app" class="return-line" d="" />
             </svg>
 
             <article class="node client-node" data-node="client">

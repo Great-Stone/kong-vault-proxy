@@ -1,6 +1,6 @@
 local typedefs = require "kong.db.schema.typedefs"
 
--- ponytail: v0.1 auth surface = token/approle/kubernetes only; add jwt/gcp/azure/aws/cert like HCV when needed.
+-- ponytail: v0.2 auth surface = token/approle/kubernetes only; add jwt/gcp/azure/aws/cert like HCV when needed.
 
 local function validate_vault_addr(addr)
   local ipv6, port = addr:match("^%[(.+)%]:(%d+)$")
@@ -23,6 +23,12 @@ local function validate_config(config)
     local has_file = file and file ~= "" and file ~= ngx.null
     if not has_sid and not has_file then
       return false, "must set one of approle_secret_id, approle_secret_id_file when auth_method is approle"
+    end
+  end
+  if config.cache and config.cache.strategy == "redis" then
+    local host = config.cache.redis and config.cache.redis.host
+    if not host or host == "" or host == ngx.null then
+      return false, "cache.redis.host is required when cache.strategy is redis"
     end
   end
   return true
@@ -67,6 +73,22 @@ return {
           { send_timeout = { type = "number", default = 5000, gt = 0 } },
           { read_timeout = { type = "number", default = 10000, gt = 0 } },
 
+          { require_vault_request_header = {
+              type = "boolean",
+              required = true,
+              default = false,
+          } },
+
+          { enable_cache_clear = {
+              type = "boolean",
+              required = true,
+              default = false,
+          } },
+          { cache_clear_path = {
+              type = "string",
+              default = "/kong-vault-proxy/v1/cache-clear",
+          } },
+
           -- Token auth
           { token = { type = "string", required = false, encrypted = true, referenceable = true } },
 
@@ -94,9 +116,40 @@ return {
               type = "record",
               fields = {
                 { enabled = { type = "boolean", required = true, default = true } },
+                { strategy = {
+                    type = "string",
+                    one_of = { "memory", "redis" },
+                    default = "memory",
+                    required = true,
+                } },
                 { kv_min_cache_ttl = { type = "number", required = true, default = 30, gt = 0 } },
                 { default_ttl = { type = "number", required = true, default = 300, gt = 0 } },
                 { neg_ttl = { type = "number", required = true, default = 5, gt = 0 } },
+                { memory = {
+                    type = "record",
+                    fields = {
+                      { dictionary_name = {
+                          type = "string",
+                          default = "kong_vault_proxy_cache",
+                      } },
+                    },
+                } },
+                { redis = {
+                    type = "record",
+                    fields = {
+                      { host = { type = "string", required = false } },
+                      { port = { type = "number", default = 6379, between = { 1, 65535 } } },
+                      { password = {
+                          type = "string",
+                          required = false,
+                          encrypted = true,
+                          referenceable = true,
+                      } },
+                      { database = { type = "number", default = 0, between = { 0, 15 } } },
+                      { timeout = { type = "number", default = 2000, gt = 0 } },
+                      { key_prefix = { type = "string", default = "kong_vault_proxy:" } },
+                    },
+                } },
               },
           } },
         },
